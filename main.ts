@@ -1,51 +1,59 @@
-// news-image-20261126 entry (Node 22, standard library only).
+// Entry program for news-image-20261126 (Node 22, standard library only).
 //
-// The entry image is the entry.png beside this file: a one-day front page
-// summing up the world's news of Thursday 26 November 2026 (38 verified
-// stories, drawn with PIL in-session — see the build session, not this
-// repo). This program copies those exact bytes to the grader's output
-// directory, after checking the gate caps itself: a whole PNG, at most
-// 1 MiB and at most 1024 by 1024 pixels. No network, no randomness, so
-// two runs write identical bytes.
+// It ships one fixed picture of Thursday 26 November 2026: the front page
+// in entry.png, 38 verified stories drawn in the build session with PIL.
+// The job here is only to hand those bytes to the grader, unchanged, after
+// proving they fit the contest limits. Nothing is drawn at run time, nothing
+// is fetched, nothing depends on the clock, so the two grading runs agree
+// byte for byte.
 //
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+// Run locally with:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const MAX_BYTES = 1048576;
-const MAX_SIDE = 1024;
+const IMAGE_NAME = "entry.png";
+const BYTE_LIMIT = 1024 * 1024;
+const SIDE_LIMIT = 1024;
 
-const src = new URL("./entry.png", import.meta.url);
-const bytes = readFileSync(src);
-
-// The image is fixed bytes in the repo: no drawing, no time, no network,
-// so the grader's two runs cannot differ.
-if (bytes.length === 0) {
-  throw new Error("entry.png is empty");
+function fail(message: string): never {
+  throw new Error(`news-image-20261126: ${message}`);
 }
 
-if (bytes.length > MAX_BYTES) {
-  throw new Error(`entry.png is ${bytes.length} bytes, over the 1 MiB cap`);
-}
-if (!bytes.subarray(0, 8).equals(PNG_SIGNATURE)) {
-  throw new Error("entry.png is not a PNG (bad signature)");
-}
-if (bytes.readUInt32BE(12) !== 0x49484452) {
-  throw new Error("entry.png has no IHDR chunk where a PNG must");
-}
-const width = bytes.readUInt32BE(16);
-const height = bytes.readUInt32BE(20);
-if (width > MAX_SIDE || height > MAX_SIDE) {
-  throw new Error(`entry.png is ${width}x${height}, over the 1024x1024 cap`);
-}
-if (bytes.readUInt32BE(bytes.length - 12) !== 0 ||
-    bytes.subarray(bytes.length - 8, bytes.length - 4).toString("ascii") !== "IEND") {
-  throw new Error("entry.png has no IEND chunk — not a whole image");
+function checkPng(image: Buffer): { width: number; height: number } {
+  if (image.length === 0) fail("entry.png is empty");
+  if (image.length > BYTE_LIMIT) {
+    fail(`entry.png is ${image.length} bytes, over the 1 MiB limit`);
+  }
+  if (image.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") {
+    fail("entry.png does not start with the PNG signature");
+  }
+  if (image.toString("ascii", 12, 16) !== "IHDR") {
+    fail("entry.png has no IHDR chunk at offset 12");
+  }
+  const width = image.readUInt32BE(16);
+  const height = image.readUInt32BE(20);
+  if (width === 0 || height === 0) fail("entry.png has a zero side");
+  if (width > SIDE_LIMIT || height > SIDE_LIMIT) {
+    fail(`entry.png is ${width}x${height}, over the 1024x1024 limit`);
+  }
+  const tail = image.subarray(image.length - 12);
+  if (tail.readUInt32BE(0) !== 0 || tail.toString("ascii", 4, 8) !== "IEND") {
+    fail("entry.png does not end with a whole IEND chunk");
+  }
+  return { width, height };
 }
 
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
-mkdirSync(outDir, { recursive: true });
-writeFileSync(join(outDir, "entry.png"), bytes);
+const here = dirname(fileURLToPath(import.meta.url));
+const sourcePath = join(here, IMAGE_NAME);
+if (!existsSync(sourcePath)) fail("entry.png is missing beside main.ts");
+const image = readFileSync(sourcePath);
+const size = checkPng(image);
+
+const destination = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+mkdirSync(destination, { recursive: true });
+writeFileSync(join(destination, IMAGE_NAME), image);
+// One line of confirmation; the file itself is the deliverable.
+console.log(`wrote ${IMAGE_NAME} (${size.width}x${size.height}, ${image.length} bytes)`);
